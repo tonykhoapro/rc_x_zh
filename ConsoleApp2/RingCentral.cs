@@ -1,6 +1,8 @@
 ﻿using dotenv.net;
 using Newtonsoft.Json;
 using RingCentral;
+using System.Net.Http;
+using System.Text;
 
 namespace ConsoleApp2
 {
@@ -12,8 +14,6 @@ namespace ConsoleApp2
         {
             DotEnv.Load();
 
-            // For the purpose of testing the code, we put the deliver address in the environment variable.
-            // Feel free to set the delivery address directly.
             DELIVERY_ADDRESS = Environment.GetEnvironmentVariable("WEBHOOK_DELIVERY_ADDRESS");
             var RC_CLIENT_ID = Environment.GetEnvironmentVariable("RC_CLIENT_ID");
             var RC_CLIENT_SECRET = Environment.GetEnvironmentVariable("RC_CLIENT_SECRET");
@@ -21,20 +21,54 @@ namespace ConsoleApp2
             var RC_JWT = Environment.GetEnvironmentVariable("RC_JWT");
             try
             {
-                // Instantiate the SDK
-                restClient = new RestClient(
-                    RC_CLIENT_ID,
-                    RC_CLIENT_SECRET,
-                    RC_SERVER_URL);
-
-                // Authenticate a user using a personal JWT token
+                restClient = new RestClient(RC_CLIENT_ID, RC_CLIENT_SECRET, RC_SERVER_URL);
                 await restClient.Authorize(RC_JWT);
                 await subscribe_for_notification();
-                //await read_subscriptions();
+                await FetchAndSendSMSLogs();
             }
             catch (Exception ex)
             {
                 Console.WriteLine(ex.Message);
+            }
+        }
+
+        static private async Task FetchAndSendSMSLogs()
+        {
+            try
+            {
+                // Define the endpoint URL for fetching SMS logs
+                var endpoint = "/restapi/v1.0/account/~/extension/~/message-store";
+                var queryParams = new { messageType = "SMS" };
+                var response = await restClient.Get(endpoint, queryParams);
+
+                var smsRecords = JsonConvert.DeserializeObject<dynamic>(response.Content.ReadAsStringAsync().Result).records;
+
+                foreach (var record in smsRecords)
+                {
+                    string jsonContent = JsonConvert.SerializeObject(record);
+                    await SendToWebhook(jsonContent);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error fetching or sending SMS logs: " + ex.Message);
+            }
+        }
+
+        static private async Task SendToWebhook(string content)
+        {
+            using (var httpClient = new HttpClient())
+            {
+                var httpContent = new StringContent(content, Encoding.UTF8, "application/json");
+                var response = await httpClient.PostAsync(DELIVERY_ADDRESS, httpContent);
+                if (response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine("SMS log successfully sent to webhook.");
+                }
+                else
+                {
+                    Console.WriteLine($"Failed to send SMS log to webhook. Status code: {response.StatusCode}");
+                }
             }
         }
         static private async Task subscribe_for_notification()
